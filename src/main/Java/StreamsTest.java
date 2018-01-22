@@ -17,9 +17,7 @@ import org.apache.kafka.streams.state.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.ByteBuffer;
 import java.util.*;
-import java.util.concurrent.Semaphore;
 
 public class StreamsTest {
 
@@ -29,10 +27,26 @@ public class StreamsTest {
     static String keySchemaInJSON = "{\"type\" : \"string\"}";
     static String valueSchemaInJSON = "{\"type\" : \"array\", \"items\" : \"string\"}";
     private static final Logger LOG = LoggerFactory.getLogger(StreamsTest.class);
+    private static StreamTest1 streamTest1 = new StreamTest1();
 
     public static void main(final String[] args) throws Exception {
         //wordCount(TOPIC, "WordsWithCountsTopic");
-        aggregateToList();
+        //aggregateToList();
+        Scanner scanner = new Scanner(System.in);
+        System.out.println("Starting Stream");
+        streamTest1.start();
+        System.out.println("Started Stream");
+        streamTest1.printAllKeysValues();
+        while(true){
+            String key = scanner.next();
+            String value = streamTest1.getValue(key);
+            System.out.println("value for key: " + key + " is " + value);
+            if(value == null) {
+                System.out.println("I am real null");
+            } else if(value.equals("null")) {
+                System.out.println("I am string null");
+            }
+        }
     }
 
     private static void aggregateToList() {
@@ -261,6 +275,81 @@ class StateStoreQueryThread<T, V> implements Runnable{
                 // store not yet ready for querying
                 Thread.sleep(100);
             }
+        }
+    }
+}
+
+class StreamTest1 {
+    ReadOnlyKeyValueStore<String, String> keyValueStore;
+
+    public void start() {
+        String stateStoreName = "CURDStateStore";
+        Properties config = StreamsTest.streamsConfig(Serdes.String().getClass(), Serdes.String().getClass(),
+                "CURDApplication");
+
+        TopologyBuilder topologyBuilder = new TopologyBuilder();
+        StateStoreSupplier CURDStateStore = Stores.create(stateStoreName).withStringKeys().withStringValues()
+                .persistent().build();
+
+        String sourceTopic = "curdStream";
+
+        topologyBuilder.addSource("SOURCE1",
+                sourceTopic).addProcessor("Processor1", () -> new MyProcessor(stateStoreName), "SOURCE1")
+                .addStateStore(CURDStateStore, "Processor1");
+        //@throws TopologyBuilderException if state store supplier is already added
+
+        KafkaStreams streams = new KafkaStreams(topologyBuilder, config);
+        streams.start();
+
+        keyValueStore = null;
+        try {
+            keyValueStore = StateStoreQueryThread.waitUntilStoreIsQueryable(stateStoreName, QueryableStoreTypes.<String, String>keyValueStore(), streams);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public String getValue(String key) {
+        return keyValueStore.get(key);
+    }
+
+    public void printAllKeysValues() {
+        KeyValueIterator<String, String> range = keyValueStore.all();
+        while(range.hasNext()) {
+            KeyValue<String, String> next = range.next();
+            System.out.println("key is " + next.key + " value is " + next.value);
+        }
+    }
+
+    class MyProcessor implements Processor<String, String> {
+
+        private final String stateStoreName;
+        private ProcessorContext context;
+        private KeyValueStore<String, String> kvStore;
+
+        MyProcessor(String stateStoreName) {
+            this.stateStoreName = stateStoreName;
+        }
+
+        @Override
+        public void init(ProcessorContext context) {
+            this.context = context;
+            this.kvStore = (KeyValueStore<String, String>) context.getStateStore(stateStoreName);
+        }
+
+        @Override
+        public void process(String key, String value) {
+            kvStore.put(key, value);
+        }
+
+        @Override
+        public void punctuate(long timestamp) {
+
+        }
+
+        @Override
+        public void close() {
+
         }
     }
 }

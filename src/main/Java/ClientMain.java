@@ -1,4 +1,6 @@
 import java.nio.ByteBuffer;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.CountDownLatch;
@@ -26,9 +28,10 @@ import scala.collection.immutable.List;
 
 public class ClientMain {
 
-    private final static String TOPIC = "jaasacct-test1";
-    private final static String TOPIC1 = "jaasacct-test";
+    private final static String TOPIC = "jaasacct-test";
+    private final static String TOPIC1 = "jaasacct-test1";
     private final static String BOOTSTRAP_SERVERS = "slc11bmw.us.oracle.com:9092";
+    //private final static String BOOTSTRAP_SERVERS = "10.252.136.161:6667";
 
     public static void main(String[] args) throws Exception {
         //getConsumerGroupDetailsUsingAdminClient(BOOTSTRAP_SERVERS, "console-consumer-73402");
@@ -40,11 +43,24 @@ public class ClientMain {
 		    } else {
 		        runProducerAsynchronously(Integer.parseInt(args[0]));
 		    }*/
-        runConsumer();
+        String topicName = "curdStream";//"compactTesting";
+        System.out.println("Starting Producer");
+        /*runProducerSynchronously(1, topicName, "Key35", "hello");
+        runProducerSynchronously(1, topicName, "Key35", null);
+        for(int i=36; i<50; i++) {
+            runProducerSynchronously(1, topicName, "Key"+i, "kuchbhi");
+        }*/
+        runProducerSynchronously(5, topicName, "delete", "hello");
+        runProducerSynchronously(5, topicName, "staying", "hello");
+        runProducerSynchronously(1, topicName, "delete", null);
+        System.out.println("Ended Producer\n\n\n");
+        System.out.println("Starting Consumer\n");
+        runConsumer(Arrays.asList(topicName), 20);
+        System.out.println("\nEnded Consumer");
         //getTopicsList();
     }
 
-    private static <T, V> Consumer<T, V> createConsumer(String keyDeserializer, String valueDeserializer) {
+    private static <T, V> Consumer<T, V> createConsumer(String keyDeserializer, String valueDeserializer, Collection<String> topics) {
         final Properties props = new Properties();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG,
                 BOOTSTRAP_SERVERS);
@@ -64,31 +80,41 @@ public class ClientMain {
 
         // Subscribe to the topic.
         //consumer.subscribe(Collections.singletonList(TOPIC));
-        consumer.subscribe(Arrays.asList(TOPIC, TOPIC1));
+        consumer.subscribe(topics);
         return consumer;
     }
 
-    private static <T, V> void runConsumer() throws InterruptedException {
-        final Consumer<T, V> consumer = createConsumer(StringDeserializer.class.getName(), StringDeserializer.class.getName());
+    private static <T, V> void runConsumer(Collection<String> topics, int noOfIteration) {
+        final Consumer<T, V> consumer = createConsumer(StringDeserializer.class.getName(), StringDeserializer.class.getName(), topics);
 
-        final int giveUp = 100;
+        //final int giveUp = 100;
         int noRecordsCount = 0;
 
-        while (true) {
+        for(int i=0; i< noOfIteration; i++) {
             final ConsumerRecords<T, V> consumerRecords =
-                    consumer.poll(100);
+                    consumer.poll(1000);
 
             if (consumerRecords.count() == 0) {
                 noRecordsCount++;
-                if (noRecordsCount > giveUp) break;
-                else continue;
+                /*if (noRecordsCount > giveUp) break;
+                else continue;*/
             }
 
             consumerRecords.forEach(record -> {
                 //System.out.printf("Consumer Record: " + record.key() );//+" "+ record.value().toString() +" "+
                 // String.valueOf(record.partition()) +" "+ String.valueOf(record.offset()));
-                System.out.printf("Consumer Record:(%s, %s, %d, %d)\n", record.key(), record.value(), record
-                        .partition(), record.offset());
+                Date date = new Date(record.timestamp());
+                TimeZone zone = TimeZone.getTimeZone("America/Los_Angeles"); // For example...
+                DateFormat format = new SimpleDateFormat("EEE MMM dd HH:mm:ss zzz yyyy"); // Put your pattern here
+                format.setTimeZone(zone);
+                String text = format.format(date);
+                System.out.printf("Consumer Record:(key: %s, value: %s, partition: %d, offset: %d, timestamp: %s)\n", record.key(), record.value(), record
+                        .partition(), record.offset(), text);
+                /*if(record.value() == null) {
+                    System.out.println("Heyy, I am not string null");
+                } else if(record.value().equals("null")) {
+                    System.out.println("Heyy, I am string null");
+                }*/
             });
 
             consumer.commitAsync();
@@ -119,15 +145,20 @@ public class ClientMain {
         return new KafkaProducer<>(props);
     }
 
-    public static void runProducerSynchronously(final int sendMessageCount) throws Exception {
-        final Producer<Long, String> producer = createProducer(null, null);
+    public static void runProducerSynchronously(final int sendMessageCount, String topicName, String key, String message) throws Exception {
+        final Producer<String, String> producer = createProducer(StringSerializer.class.getName(), StringSerializer.class.getName());
         long time = System.currentTimeMillis();
 
         try {
             for (long index = time; index < time + sendMessageCount; index++) {
-                final ProducerRecord<Long, String> record =
-                        new ProducerRecord<>(TOPIC, index,
-                                TOPIC + index);
+                ProducerRecord<String, String> record =
+                        new ProducerRecord<>(topicName, key,
+                                topicName + index); //record can be final
+
+                if(message == null) {
+                    record = new ProducerRecord<>(topicName, key,
+                                    message);
+                }
 
                 RecordMetadata metadata = producer.send(record).get();
 
@@ -136,6 +167,10 @@ public class ClientMain {
                                 "meta(partition=%d, offset=%d) time=%d\n",
                         record.key(), record.value(), metadata.partition(),
                         metadata.offset(), elapsedTime);
+
+                if(message==null) {
+                    break;
+                }
 
             }
         } finally {
@@ -252,7 +287,7 @@ public class ClientMain {
     }
 
     private static Long getLogEndOffset(TopicPartition topicPartition) {
-        Consumer<Object, Object> consumer = createConsumer(StringDeserializer.class.getName(), StringDeserializer.class.getName());
+        Consumer<Object, Object> consumer = createConsumer(StringDeserializer.class.getName(), StringDeserializer.class.getName(), Arrays.asList(TOPIC, TOPIC1));
         consumer.assign(Arrays.asList(new TopicPartition[]{topicPartition}));
         consumer.seekToEnd(Arrays.asList(new TopicPartition[]{topicPartition}));
         return consumer.position(topicPartition);
